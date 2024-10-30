@@ -25,7 +25,6 @@ from revolve2.experimentation.evolution.abstract_elements import Reproducer, Sel
 from revolve2.experimentation.logging import setup_logging
 from revolve2.experimentation.optimization.ea import population_management, selection
 from revolve2.experimentation.rng import make_rng, seed_from_time
-from revolve2.standards import terrains
 
 
 class ParentSelector(Selector):
@@ -223,21 +222,19 @@ def run_experiment(dbengine: Engine) -> None:
     - crossover_reproducer: Allows us to generate offspring from parents.
     - modular_robot_evolution: The evolutionary process as a object that can be iterated.
     """
-    environments = [terrains.flat(), terrains.rugged_heightmap(), ] # NEED 1-2 MORE TERRAINS HERE, STEPS MAYBE? IMPLEMENT OWN OR EXISTS?
-    evaluators = [Evaluator(headless=True, num_simulators=config.NUM_SIMULATORS, terrain=env) for env in environments]
-
+    evaluator = Evaluator(headless=True, num_simulators=config.NUM_SIMULATORS)
     parent_selector = ParentSelector(offspring_size=config.OFFSPRING_SIZE, rng=rng)
     survivor_selector = SurvivorSelector(rng=rng)
     crossover_reproducer = CrossoverReproducer(
         rng=rng, innov_db_body=innov_db_body, innov_db_brain=innov_db_brain
     )
-    mod_rob_evos = [
-        ModularRobotEvolution(
-            parent_selection=parent_selector, 
-            survivor_selection=survivor_selector, 
-            evaluator=ev, 
-            reproducer=crossover_reproducer,
-    ) for ev in evaluators]
+
+    modular_robot_evolution = ModularRobotEvolution(
+        parent_selection=parent_selector,
+        survivor_selection=survivor_selector,
+        evaluator=evaluator,
+        reproducer=crossover_reproducer,
+    )
 
     # Create an initial population, as we cant start from nothing.
     logging.info("Generating initial population.")
@@ -252,7 +249,7 @@ def run_experiment(dbengine: Engine) -> None:
 
     # Evaluate the initial population.
     logging.info("Evaluating initial population.")
-    initial_fitnesses = mod_rob_evos[0].evaluate(initial_genotypes)
+    initial_fitnesses = evaluator.evaluate(initial_genotypes)
 
     # Create a population of individuals, combining genotype with fitness.
     population = Population(
@@ -272,22 +269,21 @@ def run_experiment(dbengine: Engine) -> None:
 
     # Start the actual optimization process.
     logging.info("Start optimization process.")
-    for env_n in range(len(evaluators)):
-        while generation.generation_index < config.NUM_GENERATIONS/len(evaluators):
-            logging.info(
-                f"Generation {generation.generation_index + 1} / {config.NUM_GENERATIONS}."
-            )
+    while generation.generation_index < config.NUM_GENERATIONS:
+        logging.info(
+            f"Generation {generation.generation_index + 1} / {config.NUM_GENERATIONS}."
+        )
 
-            # Here we iterate the evolutionary process using the step.
-            population = mod_rob_evos[env_n].step(population)
+        # Here we iterate the evolutionary process using the step.
+        population = modular_robot_evolution.step(population)
 
-            # Make it all into a generation and save it to the database.
-            generation = Generation(
-                experiment=experiment,
-                generation_index=generation.generation_index + 1,
-                population=population,
-            )
-            save_to_db(dbengine, generation)
+        # Make it all into a generation and save it to the database.
+        generation = Generation(
+            experiment=experiment,
+            generation_index=generation.generation_index + 1,
+            population=population,
+        )
+        save_to_db(dbengine, generation)
 
 
 def main() -> None:
@@ -297,7 +293,7 @@ def main() -> None:
 
     # Open the database, only if it does not already exists.
     dbengine = open_database_sqlite(
-        config.DATABASE_FILE, open_method=OpenMethod.NOT_EXISTS_AND_CREATE
+        config.DATABASE_FILE, open_method=OpenMethod.OVERWITE_IF_EXISTS
     )
     # Create the structure of the database.
     Base.metadata.create_all(dbengine)
