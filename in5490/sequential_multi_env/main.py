@@ -40,7 +40,7 @@ import logging
 import time
 from argparse import ArgumentParser
 
-from bayes_opt import BayesianOptimization, UtilityFunction
+from bayes_opt import BayesianOptimization
 from sklearn.gaussian_process.kernels import Matern
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -296,7 +296,7 @@ def learn_genotype(genotype, evaluator, rng):
         random_state=int(rng.integers(low=0, high=2**32))
     )
     optimizer.set_gp_params(alpha=config.ALPHA, kernel=Matern(nu=config.NU, length_scale=config.LENGTH_SCALE, length_scale_bounds=(config.LENGTH_SCALE - 0.01, config.LENGTH_SCALE + 0.01)))
-    utility = UtilityFunction(kind="ucb", kappa=config.KAPPA)
+    utility = optimizer.acquisition_function()
 
     best_objective_value = None
     best_learn_genotype = None
@@ -415,7 +415,7 @@ def run_experiment(dbengine: Engine) -> None:
     - crossover_reproducer: Allows us to generate offspring from parents.
     - modular_robot_evolution: The evolutionary process as a object that can be iterated.
     """
-    environments = [terrains.flat(), terrains.rugged_heightmap(),]
+    environments = [terrains.flat(), terrains.rugged_heightmap((20.0, 20.0), [4, 4]),]
     evals = [Evaluator(headless=True, num_simulators=config.NUM_SIMULATORS, terrain=env) for env in environments]
     parent_selector = ParentSelector(offspring_size=config.OFFSPRING_SIZE, rng=rng)
     survivor_selector = SurvivorSelector(rng=rng)
@@ -472,7 +472,8 @@ def run_experiment(dbengine: Engine) -> None:
             )
             # Choose the parents and create offspring
             parents = parent_selector.select(population)
-            offspring = crossover_reproducer.reproduce(parents)
+            print(type(parents))
+            offspring = crossover_reproducer.reproduce(population=population, parent_population=parents)
 
             # Evaluate the offspring
             offspring_fitnesses, offspring_genotypes = learn_population(offspring, evals[env_n], dbengine, rng)
