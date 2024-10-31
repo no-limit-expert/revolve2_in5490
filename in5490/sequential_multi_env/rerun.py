@@ -10,6 +10,10 @@ from sqlalchemy.orm import Session
 
 from revolve2.experimentation.database import OpenMethod, open_database_sqlite
 from revolve2.experimentation.logging import setup_logging
+from revolve2.modular_robot.body.base import ActiveHinge
+from revolve2.modular_robot.brain.cpg import (
+    active_hinges_to_cpg_network_structure_neighbor,
+)
 
 
 def main() -> None:
@@ -33,13 +37,29 @@ def main() -> None:
         genotype = row[0]
         fitness = row[1]
 
+    parameters = genotype.parameters
+
     logging.info(f"Best fitness: {fitness}")
+    logging.info(f"Best parameters: {parameters}")
+
+    # Prepare the body and brain structure
+    active_hinges = config.BODY.find_modules_of_type(ActiveHinge)
+    (
+        cpg_network_structure,
+        output_mapping,
+    ) = active_hinges_to_cpg_network_structure_neighbor(active_hinges)
 
     # Create the evaluator.
-    evaluator = Evaluator(headless=False, num_simulators=1)
+    evaluator = Evaluator(
+        headless=False,
+        num_simulators=1,
+        cpg_network_structure=cpg_network_structure,
+        body=config.BODY,
+        output_mapping=output_mapping,
+    )
 
     # Show the robot.
-    evaluator.evaluate([genotype])
+    evaluator.evaluate([parameters])
 
 
 if __name__ == "__main__":
