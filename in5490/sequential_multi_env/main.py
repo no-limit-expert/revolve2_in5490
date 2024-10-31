@@ -47,6 +47,7 @@ from sqlalchemy.orm import Session
 
 import config
 from revolve2.modular_robot.body.base import ActiveHinge
+from evaluator import Evaluator
 
 
 
