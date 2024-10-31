@@ -23,6 +23,7 @@ class Evaluator(Eval):
         self,
         headless: bool,
         num_simulators: int,
+        terrain : terrains = terrains.flat()
     ) -> None:
         """
         Initialize this object.
@@ -33,7 +34,7 @@ class Evaluator(Eval):
         self._simulator = LocalSimulator(
             headless=headless, num_simulators=num_simulators
         )
-        self._terrain = terrains.flat()
+        self._terrain = terrain
 
     def evaluate(
         self,

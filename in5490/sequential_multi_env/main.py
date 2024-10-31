@@ -1,7 +1,8 @@
 """Main script for the example."""
 
 import logging
-from typing import Any
+from typing import Any, List
+import concurrent
 
 import config
 import multineat
@@ -15,7 +16,12 @@ from database_components import (
     Individual,
     Population,
 )
-from evaluator import Evaluator
+# New
+from database_components.learn_generation import LearnGeneration
+from database_components.learn_genotype import LearnGenotype
+from database_components.learn_individual import LearnIndividual
+from database_components.learn_population import LearnPopulation
+
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -25,6 +31,23 @@ from revolve2.experimentation.evolution.abstract_elements import Reproducer, Sel
 from revolve2.experimentation.logging import setup_logging
 from revolve2.experimentation.optimization.ea import population_management, selection
 from revolve2.experimentation.rng import make_rng, seed_from_time
+from revolve2.standards import terrains
+
+
+
+import concurrent.futures
+import logging
+import time
+from argparse import ArgumentParser
+
+from bayes_opt import BayesianOptimization, UtilityFunction
+from sklearn.gaussian_process.kernels import Matern
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
+
+import config
+from revolve2.modular_robot.body.base import ActiveHinge
+
 
 
 class ParentSelector(Selector):
@@ -188,6 +211,175 @@ class CrossoverReproducer(Reproducer):
         ]
         return offspring_genotypes
 
+def latin_hypercube(n, k, rng: np.random.Generator):
+    """
+    Generate Latin Hypercube samples.
+
+    Parameters:
+    n (int): Number of samples.
+    k (int): Number of dimensions.
+
+    Returns:
+    numpy.ndarray: Array of Latin Hypercube samples of shape (n, k).
+    """
+    # Generate random permutations for each dimension
+    perms = [rng.permutation(n) for _ in range(k)]
+
+    # Generate the samples
+    samples = np.empty((n, k))
+
+    for i in range(k):
+        # Generate the intervals
+        interval = np.linspace(0, 1, n+1)
+
+        # Assign values from each interval to the samples
+        for j in range(n):
+            samples[perms[i][j], i] = rng.uniform(interval[j], interval[j+1])
+
+    return samples
+
+
+def learn_population(genotypes, evaluator, dbengine, rng):
+    with concurrent.futures.ProcessPoolExecutor(
+            max_workers=config.NUM_PARALLEL_PROCESSES
+    ) as executor:
+        futures = [
+            executor.submit(learn_genotype, genotype, evaluator, rng)
+            for genotype in genotypes
+        ]
+    result_objective_values = []
+    genotypes = []
+    for future in futures:
+
+        objective_value, learn_generations = future.result()
+        result_objective_values.append(objective_value)
+        genotypes.append(learn_generations[0].genotype)
+
+        for learn_generation in learn_generations:
+            with Session(dbengine, expire_on_commit=False) as session:
+                session.add(learn_generation)
+                session.commit()
+    return result_objective_values, genotypes
+
+def learn_genotype(genotype, evaluator, rng):
+    # We get the brain uuids from the developed body, because if it is too big we don't want to learn unused uuids
+    developed_body = genotype.develop_body()
+    brain_uuids = set()
+    for active_hinge in developed_body.find_modules_of_type(ActiveHinge):
+        brain_uuids.add(active_hinge.map_uuid)
+    brain_uuids = list(brain_uuids)
+    genotype.update_brain_parameters(brain_uuids, rng)
+
+    if len(brain_uuids) == 0:
+        empty_learn_genotype = LearnGenotype(brain=genotype.brain, body=genotype.body)
+        population = LearnPopulation(
+            individuals=[
+                LearnIndividual(genotype=empty_learn_genotype, objective_value=0)
+            ]
+        )
+        return 0, [LearnGeneration(
+            genotype=genotype,
+            generation_index=0,
+            learn_population=population,
+        )]
+
+    pbounds = {}
+    for key in brain_uuids:
+        pbounds['amplitude_' + str(key)] = [0, 1]
+        pbounds['phase_' + str(key)] = [0, 1]
+
+    optimizer = BayesianOptimization(
+        f=None,
+        pbounds=pbounds,
+        allow_duplicate_points=True,
+        random_state=int(rng.integers(low=0, high=2**32))
+    )
+    optimizer.set_gp_params(alpha=config.ALPHA, kernel=Matern(nu=config.NU, length_scale=config.LENGTH_SCALE, length_scale_bounds=(config.LENGTH_SCALE - 0.01, config.LENGTH_SCALE + 0.01)))
+    utility = UtilityFunction(kind="ucb", kappa=config.KAPPA)
+
+    best_objective_value = None
+    best_learn_genotype = None
+    learn_generations = []
+    lhs = latin_hypercube(config.NUM_RANDOM_SAMPLES, 2 * len(brain_uuids), rng)
+    best_point = {}
+    for i in range(config.LEARN_NUM_GENERATIONS + config.NUM_RANDOM_SAMPLES):
+        logging.info(f"Learn generation {i + 1} / {config.LEARN_NUM_GENERATIONS + config.NUM_RANDOM_SAMPLES}.")
+        if i < config.NUM_RANDOM_SAMPLES:
+            if config.EVOLUTIONARY_SEARCH:
+                next_point = {}
+                for key in brain_uuids:
+                    next_point['amplitude_' + str(key)] = genotype.brain[key][0]
+                    next_point['phase_' + str(key)] = genotype.brain[key][1]
+            else:
+                j = 0
+                next_point = {}
+                for key in brain_uuids:
+                    next_point['amplitude_' + str(key)] = lhs[i][j]
+                    next_point['phase_' + str(key)] = lhs[i][j + 1]
+                    j += 2
+                next_point = dict(sorted(next_point.items()))
+        else:
+            next_point = optimizer.suggest(utility)
+            next_point = dict(sorted(next_point.items()))
+            next_best = utility.utility([list(next_point.values())], optimizer._gp, 0)
+            for _ in range(10000):
+                possible_point = {}
+                for key in best_point.keys():
+                    possible_point[key] = best_point[key] + np.random.normal(0, config.NEIGHBOUR_SCALE)
+                possible_point = dict(sorted(possible_point.items()))
+
+                utility_value = utility.utility([list(possible_point.values())], optimizer._gp, 0)
+                if utility_value > next_best:
+                    next_best = utility_value
+                    next_point = possible_point
+
+        new_learn_genotype = LearnGenotype(brain={}, body=genotype.body)
+        for brain_uuid in brain_uuids:
+            new_learn_genotype.brain[brain_uuid] = np.array(
+                [
+                    next_point['amplitude_' + str(brain_uuid)],
+                    next_point['phase_' + str(brain_uuid)],
+                ]
+            )
+        robot = new_learn_genotype.develop(developed_body)
+
+        # Evaluate them.
+        start_time = time.time()
+        objective_value = evaluator.evaluate(robot)
+        end_time = time.time()
+        new_learn_genotype.execution_time = end_time - start_time
+
+        if best_objective_value is None or objective_value >= best_objective_value:
+            best_objective_value = objective_value
+            best_learn_genotype = new_learn_genotype
+            best_point = next_point
+
+        optimizer.register(params=next_point, target=objective_value)
+
+        # From the samples and fitnesses, create a population that we can save.
+        population = LearnPopulation(
+            individuals=[
+                LearnIndividual(genotype=new_learn_genotype, objective_value=objective_value)
+            ]
+        )
+        # Make it all into a generation and save it to the database.
+        learn_generation = LearnGeneration(
+            genotype=genotype,
+            generation_index=i,
+            learn_population=population,
+        )
+        learn_generations.append(learn_generation)
+
+    if config.OVERWRITE_BRAIN_GENOTYPE:
+        for key, value in best_learn_genotype.brain.items():
+            genotype.brain[key] = value
+        genotype.brain = {k: v for k, v in sorted(genotype.brain.items())}
+
+    return best_objective_value, learn_generations
+
+
+## EXPERIMENT
+
 
 def run_experiment(dbengine: Engine) -> None:
     """
@@ -222,19 +414,21 @@ def run_experiment(dbengine: Engine) -> None:
     - crossover_reproducer: Allows us to generate offspring from parents.
     - modular_robot_evolution: The evolutionary process as a object that can be iterated.
     """
-    evaluator = Evaluator(headless=True, num_simulators=config.NUM_SIMULATORS)
+    environments = [terrains.flat(), terrains.rugged_heightmap(),]
+    evals = [Evaluator(headless=True, num_simulators=config.NUM_SIMULATORS, terrain=env) for env in environments]
     parent_selector = ParentSelector(offspring_size=config.OFFSPRING_SIZE, rng=rng)
     survivor_selector = SurvivorSelector(rng=rng)
     crossover_reproducer = CrossoverReproducer(
         rng=rng, innov_db_body=innov_db_body, innov_db_brain=innov_db_brain
     )
-
-    modular_robot_evolution = ModularRobotEvolution(
-        parent_selection=parent_selector,
-        survivor_selection=survivor_selector,
-        evaluator=evaluator,
-        reproducer=crossover_reproducer,
-    )
+    # mod_rob_evos : List[ModularRobotEvolution] = [ # remove this and use your own in this func
+    #     ModularRobotEvolution(
+    #         parent_selection=parent_selector,
+    #         survivor_selection=survivor_selector,
+    #         evaluator=eval,
+    #         reproducer=crossover_reproducer,
+    #     ) for eval in evals
+    # ]
 
     # Create an initial population, as we cant start from nothing.
     logging.info("Generating initial population.")
@@ -249,7 +443,7 @@ def run_experiment(dbengine: Engine) -> None:
 
     # Evaluate the initial population.
     logging.info("Evaluating initial population.")
-    initial_fitnesses = evaluator.evaluate(initial_genotypes)
+    initial_fitnesses = evals[0].evaluate(initial_genotypes)
 
     # Create a population of individuals, combining genotype with fitness.
     population = Population(
@@ -267,23 +461,38 @@ def run_experiment(dbengine: Engine) -> None:
     )
     save_to_db(dbengine, generation)
 
+
     # Start the actual optimization process.
     logging.info("Start optimization process.")
-    while generation.generation_index < config.NUM_GENERATIONS:
-        logging.info(
-            f"Generation {generation.generation_index + 1} / {config.NUM_GENERATIONS}."
-        )
+    for env_n in range(len(environments)):
+        while generation.generation_index < config.NUM_GENERATIONS/len(environments):
+            logging.info(
+                f"Generation {generation.generation_index + 1} / {config.NUM_GENERATIONS}."
+            )
+            # Choose the parents and create offspring
+            parents = parent_selector.select(population)
+            offspring = crossover_reproducer.reproduce(parents)
 
-        # Here we iterate the evolutionary process using the step.
-        population = modular_robot_evolution.step(population)
+            # Evaluate the offspring
+            offspring_fitnesses, offspring_genotypes = learn_population(offspring, evals[env_n], dbengine, rng)
+            
+            # Offspring population
+            offspring_individuals = [Individual(gen, fit) for gen,fit in zip(offspring_genotypes, offspring_fitnesses)]
+            offspring_population = Population(offspring_individuals)
+            # New population by selection
+            population = survivor_selector.select(population, offspring_population)
 
-        # Make it all into a generation and save it to the database.
-        generation = Generation(
-            experiment=experiment,
-            generation_index=generation.generation_index + 1,
-            population=population,
-        )
-        save_to_db(dbengine, generation)
+            # Make it all into a generation and save it to the database.
+            generation = Generation(
+                experiment=experiment,
+                generation_index=generation.generation_index + 1,
+                population=population,
+            )
+            save_to_db(dbengine, generation)
+            
+        post_env_fitness = None
+        if env_n < len(environments):
+            post_env_fitness = evals[env_n+1]
 
 
 def main() -> None:
