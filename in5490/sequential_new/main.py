@@ -286,7 +286,7 @@ def run_experiment(dbengine: Engine) -> None:
     # Start the actual optimization process.
     logging.info("Start optimization process.")
     for env_n in range(len(environments)):
-        while generation.generation_index < config.NUM_GENERATIONS:
+        while generation.generation_index < config.NUM_GENERATIONS/len(environments):
             logging.info(
                 f"Generation {generation.generation_index + 1} / {config.NUM_GENERATIONS}."
             )
