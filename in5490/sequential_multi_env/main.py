@@ -42,9 +42,6 @@ def run_experiment(dbengine: Engine) -> None:
     logging.info("----------------")
     logging.info("Start experiment")
 
-
-    
-
     # Create an initial population, as we cant start from nothing.
     logging.info("Generating initial population.")
     initial_genotypes = [
@@ -98,7 +95,7 @@ def run_experiment(dbengine: Engine) -> None:
     )
 
     mod_rob_evos = [
-            ModularRobotEvolution(
+        ModularRobotEvolution(
             parent_selection=parent_selector,
             survivor_selection=survivor_selector,
             evaluator=eval,
@@ -124,68 +121,73 @@ def run_experiment(dbengine: Engine) -> None:
 
     # Run cma for the defined number of generations.
     logging.info("Start optimization process.")
-    for env_n in environments:
-        while ...:
-             # Find all active hinges in the body
-            active_hinges = config.BODY.find_modules_of_type(ActiveHinge)
 
-            # Create a structure for the CPG network from these hinges.
-            # This also returns a mapping between active hinges and the index of there corresponding cpg in the network.
-            (
-                cpg_network_structure,
-                output_mapping,
-            ) = active_hinges_to_cpg_network_structure_neighbor(active_hinges)
+    # Loop for every environment
+    for env_n in range(len(environments)):
+        logging.info(f"Done with environment {env_n + 1} / {len(environments)}.")
+        # Loop same amount of generations for every environment
+        while generation.generation_index < config.NUM_BODY_GENERATIONS:
+            # Train brain for every individual? Then decide fitness.
+            logging.info(f"Environment: {env_n}\tGeneration: {generation.generation_index + 1} / {config.NUM_BODY_GENERATIONS}.")
+            for individual in population.individuals:
+                # Find all active hinges in the body
+                # active_hinges = config.BODY.find_modules_of_type(ActiveHinge)
+                active_hinges = individual.genotype.develop_body().find_modules_of_type(ActiveHinge)
 
-            # Intialize the evaluator that will be used to evaluate robots.
-            evaluator = Evaluator(
-                headless=True,
-                num_simulators=config.NUM_SIMULATORS,
-                cpg_network_structure=cpg_network_structure,
-                body=config.BODY,
-                output_mapping=output_mapping,
-            )
+                # Create a structure for the CPG network from these hinges.
+                # This also returns a mapping between active hinges and the index of there corresponding cpg in the network.
+                (
+                    cpg_network_structure,
+                    output_mapping,
+                ) = active_hinges_to_cpg_network_structure_neighbor(active_hinges)
 
-            # Initial parameter values for the brain.
-            initial_mean = cpg_network_structure.num_connections * [0.5]
+                # The evaluator that will be used to evaluate robots.
+                evaluator = evaluators[env_n]
 
-            # Initialize the cma optimizer.
-            options = cma.CMAOptions()
-            options.set("bounds", [-1.0, 1.0])
-            options.set("seed", rng_seed)
-            opt = cma.CMAEvolutionStrategy(initial_mean, config.INITIAL_STD, options)
+                # Initial parameter values for the brain.
+                initial_mean = cpg_network_structure.num_connections * [0.5]
 
-            while opt.countiter < config.NUM_BRAIN_GENERATIONS:
-                logging.info(f"Generation {opt.countiter + 1} / {config.NUM_GENERATIONS}.")
+                # Initialize the cma optimizer.
+                options = cma.CMAOptions()
+                options.set("bounds", [-1.0, 1.0])
+                options.set("seed", rng_seed)
+                opt = cma.CMAEvolutionStrategy(initial_mean, config.INITIAL_STD, options)
 
-                # Get the sampled solutions(parameters) from cma.
-                solutions = opt.ask()
+                while opt.countiter < config.NUM_BRAIN_GENERATIONS:
+                    logging.info(f"Training brain - iteration: {opt.countiter + 1} / {config.NUM_GENERATIONS}.")
 
-                # Evaluate them.
-                fitnesses = evaluators[0].evaluate(solutions)
+                    # Get the sampled solutions(parameters) from cma.
+                    solutions = opt.ask()
 
-                # Tell cma the fitnesses.
-                # Provide them negated, as cma minimizes but we want to maximize.
-                opt.tell(solutions, -fitnesses)
+                    # Evaluate them.
+                    fitnesses = evaluators[env_n].evaluate(solutions)
 
-                # From the samples and fitnesses, create a population that we can save.
-                population = Population(
-                    individuals=[
-                        Individual(genotype=Genotype(parameters), fitness=fitness)
-                        for parameters, fitness in zip(solutions, fitnesses)
-                    ]
-                )
+                    # Tell cma the fitnesses.
+                    # Provide them negated, as cma minimizes but we want to maximize.
+                    opt.tell(solutions, -fitnesses)
 
-                # Make it all into a generation and save it to the database.
-                generation = Generation(
-                    experiment=experiment,
-                    generation_index=opt.countiter,
-                    population=population,
-                )
-                
+                    # From the samples and fitnesses, create a population that we can save.
+                    brain_population = Population(
+                        individuals=[
+                            Individual(genotype=Genotype(parameters), fitness=fitness)
+                            for parameters, fitness in zip(solutions, fitnesses)
+                        ]
+                    )
+
+                    # Make it all into a generation and save it to the database.
+                    brain_generation = Generation(
+                        experiment=experiment,
+                        generation_index=opt.countiter,
+                        population=population,
+                    )
+
+            # Finally save logs
             logging.info("Saving generation.")
             with Session(dbengine, expire_on_commit=False) as session:
                 session.add(generation)
                 session.commit()
+        logging.info(f"Finished training on environment {env_n + 1}.")
+
 
 
 def save_to_db(dbengine: Engine, generation: Generation) -> None:
