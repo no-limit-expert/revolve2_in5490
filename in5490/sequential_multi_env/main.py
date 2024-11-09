@@ -99,18 +99,14 @@ def run_experiment(dbengine: Engine) -> None:
 
     # Evaluate the initial population.
     logging.info("Evaluating initial population.")
-    initial_bodies = [
-        
-    ]
-    initial_fitnesses = evaluators[0].evaluate(initial_genotypes, )
+    initial_bodies = [g.develop_body() for g in initial_genotypes]
+    # initial_fitnesses = evaluators[0].evaluate(initial_genotypes, initial_bodies)
 
     # Create a population of individuals, combining genotype with fitness.
     population = Population(
         individuals=[
-            Individual(genotype=genotype, fitness=fitness)
-            for genotype, fitness in zip(
-                initial_genotypes, initial_fitnesses, strict=True
-            )
+            train_brain(Individual(genotype=genotype, fitness=0), rng_seed, evaluators[0]) 
+            for genotype in initial_genotypes
         ]
     )
 
@@ -131,63 +127,7 @@ def run_experiment(dbengine: Engine) -> None:
             logging.info(f"Environment: {env_n}\tGeneration: {generation.generation_index + 1} / {config.NUM_BODY_GENERATIONS}.")
             # Train brain for every individual? Then decide fitness.
             for individual in population.individuals:
-                # Find all active hinges in the body
-                # active_hinges = config.BODY.find_modules_of_type(ActiveHinge)
-                active_hinges = individual.genotype.develop_body().find_modules_of_type(ActiveHinge)
-                # If no hinges, skip
-                if len(active_hinges) == 0:
-                    continue
-
-                # Create a structure for the CPG network from these hinges.
-                # This also returns a mapping between active hinges and the index of there corresponding cpg in the network.
-                (
-                    cpg_network_structure,
-                    output_mapping,
-                ) = active_hinges_to_cpg_network_structure_neighbor(active_hinges)
-
-                # Initial parameter values for the brain.
-                initial_mean = cpg_network_structure.num_connections * [0.5]
-
-                # Notify Bayesian Optimization (BO) of the bounds for the parameters
-                pbounds = {}
-                for i in range(cpg_network_structure.num_connections):
-                    pbounds[str(i)] = (-1, 1)
-                # Initialize BO
-                optimizer = BayesianOptimization(
-                    f=None,
-                    pbounds=pbounds,
-                    allow_duplicate_points=True,
-                    random_state=int(rng_seed),
-                    acquisition_function=acquisition.UpperConfidenceBound(kappa=config.KAPPA)
-                )
-                optimizer.set_gp_params(alpha=config.NOISE_ALPHA, 
-                                        kernel=Matern(nu=config.NU, length_scale=config.LENGTH_SCALE,length_scale_bounds="fixed"))
-
-                for generation_index in range(config.NUM_BRAIN_GENERATIONS):
-                    logging.info(f"Training brain - iteration: {generation_index + 1} / {config.NUM_BRAIN_GENERATIONS}.")
-
-                    # Get the sampled solutions(parameters) from BO.
-                    next_point = optimizer.suggest()
-                    next_point = dict(sorted(next_point.items()))
-
-                    # Evaluate them.
-                    fitnesses = evaluators[env_n].evaluate([next_point.values()], 
-                                                           individual.genotype.body, 
-                                                           cpg_network_structure, 
-                                                           output_mapping)
-
-                    # Tell BO the fitnesses.
-                    optimizer.register(params=next_point, target=fitnesses[0])
-
-                    # TODO: These values are the brain parameters and fitness to save
-                    brain_parameters = list(next_point.values())
-                    fitness = fitnesses[0]
-
-                    individual.genotype.parameters.append(brain_parameters)
-                    individual.genotype.fitnesses.append(fitness)
-
-                # Store best fitness in individual.fitness
-                individual.fitness = individual.genotype.fitnesses[-1]
+                train_brain(individual,rng_seed, evaluators[env_n])
 
             #selection and reproduction
             population = mod_rob_evos[env_n].step(population)
@@ -202,10 +142,64 @@ def run_experiment(dbengine: Engine) -> None:
             # Finally save logs
             save_to_db(dbengine=dbengine, generation=generation)
         logging.info(f"Finished training on environment {env_n + 1}.")
-        
+
 # Could remove load from run_experiment
-def train_brain():
-    return
+def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator):
+    # Find all active hinges in the body
+    # active_hinges = config.BODY.find_modules_of_type(ActiveHinge)
+    active_hinges = individual.genotype.develop_body().find_modules_of_type(ActiveHinge)
+    # If no hinges, skip
+    if len(active_hinges) == 0:
+        individual.fitness = 0
+        return
+
+    # Create a structure for the CPG network from these hinges.
+    # This also returns a mapping between active hinges and the index of there corresponding cpg in the network.
+    (
+        cpg_network_structure,
+        output_mapping,
+    ) = active_hinges_to_cpg_network_structure_neighbor(active_hinges)
+
+    # Initial parameter values for the brain.
+    initial_mean = cpg_network_structure.num_connections * [0.5]
+
+    # Notify Bayesian Optimization (BO) of the bounds for the parameters
+    pbounds = {}
+    for i in range(cpg_network_structure.num_connections):
+        pbounds[str(i)] = (-1, 1)
+    # Initialize BO
+    optimizer = BayesianOptimization(
+        f=None,
+        pbounds=pbounds,
+        allow_duplicate_points=True,
+        random_state=int(rng_seed),
+        acquisition_function=acquisition.UpperConfidenceBound(kappa=config.KAPPA)
+    )
+    optimizer.set_gp_params(alpha=config.NOISE_ALPHA, 
+                            kernel=Matern(nu=config.NU, length_scale=config.LENGTH_SCALE,length_scale_bounds="fixed"))
+
+    for generation_index in range(config.NUM_BRAIN_GENERATIONS):
+        logging.info(f"Training brain - iteration: {generation_index + 1} / {config.NUM_BRAIN_GENERATIONS}.")
+
+        # Get the sampled solutions(parameters) from BO.
+        next_point = optimizer.suggest()
+        next_point = dict(sorted(next_point.items()))
+
+        # Evaluate them.
+        fitnesses = evaluator.evaluate([next_point.values()], individual.genotype.develop_body(), cpg_network_structure, output_mapping)
+
+        # Tell BO the fitnesses.
+        optimizer.register(params=next_point, target=fitnesses[0])
+
+        # TODO: These values are the brain parameters and fitness to save
+        brain_parameters = list(next_point.values())
+        fitness = fitnesses[0]
+
+        individual.genotype.parameters.append(brain_parameters)
+        individual.genotype.fitnesses.append(fitness)
+
+    # Store best fitness in individual.fitness
+    individual.fitness = individual.genotype.fitnesses[-1]
 
 def save_to_db(dbengine: Engine, generation: Generation) -> None:
     """
