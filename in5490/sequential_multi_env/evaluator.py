@@ -31,9 +31,6 @@ class Evaluator:
         self,
         headless: bool,
         num_simulators: int,
-        cpg_network_structure: CpgNetworkStructure,
-        body: Body,
-        output_mapping: list[tuple[int, ActiveHinge]],
         terrain: Terrain = terrains.flat()
     ) -> None:
         """
@@ -49,13 +46,13 @@ class Evaluator:
             headless=headless, num_simulators=num_simulators
         )
         self._terrain = terrain
-        self._cpg_network_structure = cpg_network_structure
-        self._body = body
-        self._output_mapping = output_mapping
 
     def evaluate(
         self,
         solutions: list[npt.NDArray[np.float_]],
+        body: Body,
+        cpg_network_structure: CpgNetworkStructure,
+        output_mapping: list[tuple[int, ActiveHinge]]
     ) -> npt.NDArray[np.float_]:
         """
         Evaluate multiple robots.
@@ -68,12 +65,12 @@ class Evaluator:
         # Create robots from the brain parameters.
         robots = [
             ModularRobot(
-                body=self._body,
+                body=body,
                 brain=BrainCpgNetworkStatic.uniform_from_params(
                     params=params,
-                    cpg_network_structure=self._cpg_network_structure,
+                    cpg_network_structure=cpg_network_structure,
                     initial_state_uniform=math.sqrt(2) * 0.5,
-                    output_mapping=self._output_mapping,
+                    output_mapping=output_mapping,
                 ),
             )
             for params in solutions

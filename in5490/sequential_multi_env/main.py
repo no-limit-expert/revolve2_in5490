@@ -1,6 +1,7 @@
 """Main script for the example."""
 
 import logging
+import numpy as np
 import cma
 import multineat
 import config
@@ -42,26 +43,15 @@ def run_experiment(dbengine: Engine) -> None:
     """
     logging.info("----------------")
     logging.info("Start experiment")
-
-    # Create an initial population, as we cant start from nothing.
-    logging.info("Generating initial population.")
-    initial_genotypes = [
-        Genotype.random(
-            innov_db_body=innov_db_body,
-            innov_db_brain=innov_db_brain,
-            rng=rng_seed,
-        )
-        for _ in range(config.POPULATION_SIZE)
-    ]
-
-    # Evaluate the initial population.
-    logging.info("Evaluating initial population.")
-    initial_fitnesses = evaluator.evaluate(initial_genotypes)
-
     
+    # CPPN innovation databases.
+    innov_db_body = multineat.InnovationDatabase()
+    innov_db_brain = multineat.InnovationDatabase()
 
-    # Create an rng seed.
-    rng_seed = seed_from_time() % 2**32  # Cma seed must be smaller than 2**32.
+    # Generate a seed
+    rng_seed = seed_from_time() % 2**32  # Ensure the seed is within the valid range
+
+    rng = make_rng(rng_seed)
 
     # Create and save the experiment instance.
     experiment = Experiment(rng_seed=rng_seed)
@@ -69,25 +59,17 @@ def run_experiment(dbengine: Engine) -> None:
     with Session(dbengine) as session:
         session.add(experiment)
         session.commit()
-
-    # CPPN innovation databases.
-    innov_db_body = multineat.InnovationDatabase()
-    innov_db_brain = multineat.InnovationDatabase()
-
     
-
     # Intialize the evaluator that will be used to evaluate robots.
     environments = [terrains.flat(), terrains.rugged_heightmap((20.0, 20.0), (2, 2)),]
     evaluators = [
         Evaluator(
             headless=True,
             num_simulators=config.NUM_SIMULATORS,
-            cpg_network_structure=cpg_network_structure,
-            body=config.BODY,
-            output_mapping=output_mapping,
             terrain=env
         ) for env in environments
     ]
+
 
     parent_selector = ParentSelector(offspring_size=config.OFFSPRING_SIZE, rng=rng_seed)
     survivor_selector = SurvivorSelector(rng=rng_seed)
@@ -103,6 +85,24 @@ def run_experiment(dbengine: Engine) -> None:
             reproducer=crossover_reproducer,
         ) for eval in evaluators
     ]
+
+    # Create an initial population, as we cant start from nothing.
+    logging.info("Generating initial population.")
+    initial_genotypes: list[Genotype] = [
+        Genotype.random(
+            innov_db_body=innov_db_body,
+            innov_db_brain=innov_db_brain,
+            rng=rng,
+        )
+        for _ in range(config.POPULATION_SIZE)
+    ]
+
+    # Evaluate the initial population.
+    logging.info("Evaluating initial population.")
+    initial_bodies = [
+        
+    ]
+    initial_fitnesses = evaluators[0].evaluate(initial_genotypes, )
 
     # Create a population of individuals, combining genotype with fitness.
     population = Population(
@@ -129,13 +129,14 @@ def run_experiment(dbengine: Engine) -> None:
         # Loop same amount of generations for every environment
         while generation.generation_index < config.NUM_BODY_GENERATIONS:
             logging.info(f"Environment: {env_n}\tGeneration: {generation.generation_index + 1} / {config.NUM_BODY_GENERATIONS}.")
-
-
             # Train brain for every individual? Then decide fitness.
             for individual in population.individuals:
                 # Find all active hinges in the body
                 # active_hinges = config.BODY.find_modules_of_type(ActiveHinge)
                 active_hinges = individual.genotype.develop_body().find_modules_of_type(ActiveHinge)
+                # If no hinges, skip
+                if len(active_hinges) == 0:
+                    continue
 
                 # Create a structure for the CPG network from these hinges.
                 # This also returns a mapping between active hinges and the index of there corresponding cpg in the network.
@@ -159,8 +160,8 @@ def run_experiment(dbengine: Engine) -> None:
                     random_state=int(rng_seed),
                     acquisition_function=acquisition.UpperConfidenceBound(kappa=config.KAPPA)
                 )
-                optimizer.set_gp_params(alpha=config.NOISE_ALPHA, kernel=Matern(nu=config.NU, length_scale=config.LENGTH_SCALE,
-                                                                length_scale_bounds="fixed"))
+                optimizer.set_gp_params(alpha=config.NOISE_ALPHA, 
+                                        kernel=Matern(nu=config.NU, length_scale=config.LENGTH_SCALE,length_scale_bounds="fixed"))
 
                 for generation_index in range(config.NUM_BRAIN_GENERATIONS):
                     logging.info(f"Training brain - iteration: {generation_index + 1} / {config.NUM_BRAIN_GENERATIONS}.")
@@ -170,7 +171,10 @@ def run_experiment(dbengine: Engine) -> None:
                     next_point = dict(sorted(next_point.items()))
 
                     # Evaluate them.
-                    fitnesses = evaluators[env_n].evaluate([next_point.values()])
+                    fitnesses = evaluators[env_n].evaluate([next_point.values()], 
+                                                           individual.genotype.body, 
+                                                           cpg_network_structure, 
+                                                           output_mapping)
 
                     # Tell BO the fitnesses.
                     optimizer.register(params=next_point, target=fitnesses[0])
@@ -179,9 +183,15 @@ def run_experiment(dbengine: Engine) -> None:
                     brain_parameters = list(next_point.values())
                     fitness = fitnesses[0]
 
+                    individual.genotype.parameters.append(brain_parameters)
+                    individual.genotype.fitnesses.append(fitness)
 
-            
+                # Store best fitness in individual.fitness
+                individual.fitness = individual.genotype.fitnesses[-1]
+
             #selection and reproduction
+            population = mod_rob_evos[env_n].step(population)
+            
             # Make it all into a generation and save it to the database.
             generation = Generation(
                 experiment=experiment,
@@ -192,8 +202,10 @@ def run_experiment(dbengine: Engine) -> None:
             # Finally save logs
             save_to_db(dbengine=dbengine, generation=generation)
         logging.info(f"Finished training on environment {env_n + 1}.")
-
-
+        
+# Could remove load from run_experiment
+def train_brain():
+    return
 
 def save_to_db(dbengine: Engine, generation: Generation) -> None:
     """

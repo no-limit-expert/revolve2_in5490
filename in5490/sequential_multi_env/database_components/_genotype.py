@@ -12,11 +12,19 @@ from revolve2.standards.genotypes.cppnwin.modular_robot.v2 import BodyGenotypeOr
 
 from ._base import Base
 
+import sqlalchemy
+import sqlalchemy.orm as orm
+from sqlalchemy.types import PickleType
+
 
 class Genotype(Base, HasId, BodyGenotypeOrmV2, BrainGenotypeCpgOrm):
     """SQLAlchemy model for a genotype for a modular robot body and brain."""
 
     __tablename__ = "genotype"
+
+    parameters: orm.Mapped[list[list[float]]] = orm.mapped_column(PickleType, nullable=True)
+    fitnesses: orm.Mapped[list[float]] = orm.mapped_column(PickleType, nullable=True)
+
 
     @classmethod
     def random(
@@ -36,7 +44,7 @@ class Genotype(Base, HasId, BodyGenotypeOrmV2, BrainGenotypeCpgOrm):
         body = cls.random_body(innov_db_body, rng)
         brain = cls.random_brain(innov_db_brain, rng)
 
-        return Genotype(body=body.body, brain=brain.brain)
+        return Genotype(body=body.body, brain=brain.brain, parameters=None, fitnesses=None)
 
     def mutate(
         self,
