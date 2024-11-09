@@ -1,7 +1,6 @@
 """Main script for the example."""
 
 import logging
-
 import cma
 import multineat
 import config
@@ -28,7 +27,9 @@ from revolve2.modular_robot.brain.cpg import (
 from revolve2.experimentation.evolution import ModularRobotEvolution
 from crossover import CrossoverReproducer
 from selector import SurvivorSelector, ParentSelector
-
+# Ege sourced bayes_opt
+from bayes_opt import BayesianOptimization, acquisition
+from sklearn.gaussian_process.kernels import Matern
 
 
 from revolve2.standards import terrains
@@ -127,8 +128,10 @@ def run_experiment(dbengine: Engine) -> None:
         logging.info(f"Done with environment {env_n + 1} / {len(environments)}.")
         # Loop same amount of generations for every environment
         while generation.generation_index < config.NUM_BODY_GENERATIONS:
-            # Train brain for every individual? Then decide fitness.
             logging.info(f"Environment: {env_n}\tGeneration: {generation.generation_index + 1} / {config.NUM_BODY_GENERATIONS}.")
+
+
+            # Train brain for every individual? Then decide fitness.
             for individual in population.individuals:
                 # Find all active hinges in the body
                 # active_hinges = config.BODY.find_modules_of_type(ActiveHinge)
@@ -141,51 +144,53 @@ def run_experiment(dbengine: Engine) -> None:
                     output_mapping,
                 ) = active_hinges_to_cpg_network_structure_neighbor(active_hinges)
 
-                # The evaluator that will be used to evaluate robots.
-                evaluator = evaluators[env_n]
-
                 # Initial parameter values for the brain.
                 initial_mean = cpg_network_structure.num_connections * [0.5]
 
-                # Initialize the cma optimizer.
-                options = cma.CMAOptions()
-                options.set("bounds", [-1.0, 1.0])
-                options.set("seed", rng_seed)
-                opt = cma.CMAEvolutionStrategy(initial_mean, config.INITIAL_STD, options)
+                # Notify Bayesian Optimization (BO) of the bounds for the parameters
+                pbounds = {}
+                for i in range(cpg_network_structure.num_connections):
+                    pbounds[str(i)] = (-1, 1)
+                # Initialize BO
+                optimizer = BayesianOptimization(
+                    f=None,
+                    pbounds=pbounds,
+                    allow_duplicate_points=True,
+                    random_state=int(rng_seed),
+                    acquisition_function=acquisition.UpperConfidenceBound(kappa=config.KAPPA)
+                )
+                optimizer.set_gp_params(alpha=config.NOISE_ALPHA, kernel=Matern(nu=config.NU, length_scale=config.LENGTH_SCALE,
+                                                                length_scale_bounds="fixed"))
 
-                while opt.countiter < config.NUM_BRAIN_GENERATIONS:
-                    logging.info(f"Training brain - iteration: {opt.countiter + 1} / {config.NUM_GENERATIONS}.")
+                for generation_index in range(config.NUM_BRAIN_GENERATIONS):
+                    logging.info(f"Training brain - iteration: {generation_index + 1} / {config.NUM_BRAIN_GENERATIONS}.")
 
-                    # Get the sampled solutions(parameters) from cma.
-                    solutions = opt.ask()
+                    # Get the sampled solutions(parameters) from BO.
+                    next_point = optimizer.suggest()
+                    next_point = dict(sorted(next_point.items()))
 
                     # Evaluate them.
-                    fitnesses = evaluators[env_n].evaluate(solutions)
+                    fitnesses = evaluators[env_n].evaluate([next_point.values()])
 
-                    # Tell cma the fitnesses.
-                    # Provide them negated, as cma minimizes but we want to maximize.
-                    opt.tell(solutions, -fitnesses)
+                    # Tell BO the fitnesses.
+                    optimizer.register(params=next_point, target=fitnesses[0])
 
-                    # From the samples and fitnesses, create a population that we can save.
-                    brain_population = Population(
-                        individuals=[
-                            Individual(genotype=Genotype(parameters), fitness=fitness)
-                            for parameters, fitness in zip(solutions, fitnesses)
-                        ]
-                    )
+                    # TODO: These values are the brain parameters and fitness to save
+                    brain_parameters = list(next_point.values())
+                    fitness = fitnesses[0]
 
-                    # Make it all into a generation and save it to the database.
-                    brain_generation = Generation(
-                        experiment=experiment,
-                        generation_index=opt.countiter,
-                        population=population,
-                    )
+
+            
+            #selection and reproduction
+            # Make it all into a generation and save it to the database.
+            generation = Generation(
+                experiment=experiment,
+                generation_index=(),
+                population=population,
+            )
 
             # Finally save logs
-            logging.info("Saving generation.")
-            with Session(dbengine, expire_on_commit=False) as session:
-                session.add(generation)
-                session.commit()
+            save_to_db(dbengine=dbengine, generation=generation)
         logging.info(f"Finished training on environment {env_n + 1}.")
 
 
