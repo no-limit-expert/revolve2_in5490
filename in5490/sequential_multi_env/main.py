@@ -118,7 +118,7 @@ def run_experiment(dbengine: Engine) -> None:
     for env_n in range(len(environments)):
         logging.info(f"Environment: {env_n + 1} / {len(environments)}.")
         # Loop same amount of generations for every environment
-        for _ in range(config.NUM_BODY_GENERATIONS/len(environments)):
+        for _ in range(int(config.NUM_BODY_GENERATIONS/len(environments))):
             logging.info(f"Environment: {env_n+1}\tGeneration: {generation.generation_index + 1} / {config.NUM_BODY_GENERATIONS}.")
             # Train brain for every individual? Then decide fitness.
             for individual in population.individuals:
