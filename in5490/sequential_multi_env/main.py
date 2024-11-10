@@ -63,7 +63,7 @@ def run_experiment(dbengine: Engine) -> None:
         session.commit()
     
     # Intialize the evaluator that will be used to evaluate robots.
-    environments = [terrains.flat()] #, terrains.rugged_heightmap((20.0, 20.0), (2, 2)),]
+    environments = [terrains.flat(), terrains.rugged_heightmap((20.0, 20.0), (2, 2)),]
     evaluators = [
         Evaluator(
             headless=True,
@@ -112,11 +112,13 @@ def run_experiment(dbengine: Engine) -> None:
     # Run cma for the defined number of generations.
     logging.info("Start optimization process.")
 
+
+
     # Loop for every environment
     for env_n in range(len(environments)):
         logging.info(f"Environment: {env_n + 1} / {len(environments)}.")
         # Loop same amount of generations for every environment
-        while generation.generation_index < config.NUM_BODY_GENERATIONS:
+        for _ in range(config.NUM_BODY_GENERATIONS/len(environments)):
             logging.info(f"Environment: {env_n+1}\tGeneration: {generation.generation_index + 1} / {config.NUM_BODY_GENERATIONS}.")
             # Train brain for every individual? Then decide fitness.
             for individual in population.individuals:
