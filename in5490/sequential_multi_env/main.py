@@ -99,10 +99,12 @@ def run_experiment(dbengine: Engine) -> None:
     # Create a population of individuals, combining genotype with fitness.
     population = Population(
         individuals=[
-            train_brain(Individual(genotype=genotype, fitness=0.0), rng_seed, evaluators[0]) 
+            Individual(genotype=genotype, fitness=0.0)
             for genotype in initial_genotypes
         ]
     )
+
+    learn_population(population.individuals, rng_seed, evaluators[0])
 
     # Finish the zeroth generation and save it to the database.
     generation = Generation(
@@ -124,7 +126,7 @@ def run_experiment(dbengine: Engine) -> None:
             # Train brain for every individual? Then decide fitness.
             # for individual in population.individuals:
             #     train_brain(individual,rng_seed, evaluators[env_n])
-            learn_population(population.individuals)
+            population.individuals = learn_population(population.individuals, rng_seed, evaluators[env_n])
 
             # Reproduction. Get offspring
             parents, _ = parent_selector.select(population)
@@ -133,7 +135,7 @@ def run_experiment(dbengine: Engine) -> None:
             # for c in offspring:
             #     train_brain(c, rng_seed, evaluators[env_n])
 
-            learn_population(offspring)
+            offspring = learn_population(offspring, rng_seed, evaluators[env_n])
 
             offspring_genotypes = []
             offspring_fitnesses = []
