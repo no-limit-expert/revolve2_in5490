@@ -105,7 +105,7 @@ def run_experiment(dbengine: Engine) -> None:
     # Create a population of individuals, combining genotype with fitness.
     population = Population(
         individuals=[
-            train_brain(Individual(genotype=genotype, fitness=0), rng_seed, evaluators[0]) 
+            train_brain(Individual(genotype=genotype, fitness=0.0), rng_seed, evaluators[0]) 
             for genotype in initial_genotypes
         ]
     )
@@ -146,8 +146,8 @@ def run_experiment(dbengine: Engine) -> None:
 # Could remove load from run_experiment
 def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator):
     # Find all active hinges in the body
-    # active_hinges = config.BODY.find_modules_of_type(ActiveHinge)
     active_hinges = individual.genotype.develop_body().find_modules_of_type(ActiveHinge)
+
     # If no hinges, skip
     if len(active_hinges) == 0:
         individual.fitness = 0
@@ -159,9 +159,6 @@ def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator):
         cpg_network_structure,
         output_mapping,
     ) = active_hinges_to_cpg_network_structure_neighbor(active_hinges)
-
-    # Initial parameter values for the brain.
-    initial_mean = cpg_network_structure.num_connections * [0.5]
 
     # Notify Bayesian Optimization (BO) of the bounds for the parameters
     pbounds = {}
@@ -197,6 +194,7 @@ def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator):
 
         individual.genotype.parameters.append(brain_parameters)
         individual.genotype.fitnesses.append(fitness)
+        return individual
 
     # Store best fitness in individual.fitness
     individual.fitness = individual.genotype.fitnesses[-1]
