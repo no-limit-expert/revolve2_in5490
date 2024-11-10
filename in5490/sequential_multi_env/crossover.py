@@ -42,7 +42,7 @@ class CrossoverReproducer(Reproducer):
 
     def reproduce(
         self, population: npt.NDArray[np.int_], **kwargs: Any
-    ) -> list[Genotype]:
+    ) -> list[Individual]:
         """
         Reproduce the population by crossover.
 
@@ -63,4 +63,4 @@ class CrossoverReproducer(Reproducer):
             ).mutate(self.innov_db_body, self.innov_db_brain, self.rng)
             for parent1_i, parent2_i in population
         ]
-        return offspring_genotypes
+        return [Individual(genotype=g, fitness=0.0) for g in offspring_genotypes]

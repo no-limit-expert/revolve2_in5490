@@ -22,9 +22,16 @@ class Genotype(Base, HasId, BodyGenotypeOrmV2, BrainGenotypeCpgOrm):
 
     __tablename__ = "genotype"
 
-    parameters: orm.Mapped[list[list[float]]] = orm.mapped_column(PickleType, nullable=True)
-    fitnesses: orm.Mapped[list[float]] = orm.mapped_column(PickleType, nullable=True)
-
+    parameters: orm.Mapped[list[list[float]]] = orm.mapped_column(
+        PickleType, 
+        nullable=True, 
+        default=None
+    )
+    fitnesses: orm.Mapped[list[float]] = orm.mapped_column(
+        PickleType, 
+        nullable=True, 
+        default=None
+    )
 
     @classmethod
     def random(
@@ -44,7 +51,7 @@ class Genotype(Base, HasId, BodyGenotypeOrmV2, BrainGenotypeCpgOrm):
         body = cls.random_body(innov_db_body, rng)
         brain = cls.random_brain(innov_db_brain, rng)
 
-        return Genotype(body=body.body, brain=brain.brain, parameters=None, fitnesses=None)
+        return Genotype(body=body.body, brain=brain.brain)
 
     def mutate(
         self,

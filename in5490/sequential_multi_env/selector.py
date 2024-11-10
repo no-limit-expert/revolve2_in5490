@@ -74,7 +74,7 @@ class SurvivorSelector(Selector):
         self.rng = rng
 
     def select(
-        self, population: Population, **kwargs: Any
+        self, population: Population, offspring: list[Genotype], offspring_fitness: npt.NDArray[np.float_]
     ) -> tuple[Population, dict[str, Any]]:
         """
         Select survivors using a tournament.
@@ -84,8 +84,8 @@ class SurvivorSelector(Selector):
         :returns: A newly created population.
         :raises ValueError: If the population is empty.
         """
-        offspring = kwargs.get("children")
-        offspring_fitness = kwargs.get("child_task_performance")
+        # offspring_geno = [off.genotype for off in offspring]
+        # offspring_fitness = [off.fitness for off in offspring]
         if offspring is None or offspring_fitness is None:
             raise ValueError(
                 "No offspring was passed with positional argument 'children' and / or 'child_task_performance'."

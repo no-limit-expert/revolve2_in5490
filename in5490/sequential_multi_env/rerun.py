@@ -34,16 +34,17 @@ def main() -> None:
         ).one()
         assert row is not None
 
-        genotype = row[0]
+        genotype: Genotype = row[0]
         fitness = row[1]
 
-    parameters = genotype.parameters
+    parameters = genotype.parameters[-1]
 
     logging.info(f"Best fitness: {fitness}")
     logging.info(f"Best parameters: {parameters}")
 
     # Prepare the body and brain structure
-    active_hinges = config.BODY.find_modules_of_type(ActiveHinge)
+    body = genotype.develop_body()
+    active_hinges = body.find_modules_of_type(ActiveHinge)
     (
         cpg_network_structure,
         output_mapping,
@@ -52,14 +53,11 @@ def main() -> None:
     # Create the evaluator.
     evaluator = Evaluator(
         headless=False,
-        num_simulators=1,
-        cpg_network_structure=cpg_network_structure,
-        body=config.BODY,
-        output_mapping=output_mapping,
+        num_simulators=1
     )
 
     # Show the robot.
-    evaluator.evaluate([parameters])
+    evaluator.evaluate([parameters], cpg_network_structure=cpg_network_structure, body=body, output_mapping=output_mapping)
 
 
 if __name__ == "__main__":
