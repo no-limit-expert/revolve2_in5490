@@ -194,7 +194,8 @@ def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator):
 
         individual.genotype.parameters.append(brain_parameters)
         individual.genotype.fitnesses.append(fitness)
-        return individual
+        
+    return individual
 
     # Store best fitness in individual.fitness
     individual.fitness = individual.genotype.fitnesses[-1]
