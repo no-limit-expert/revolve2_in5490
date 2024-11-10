@@ -32,6 +32,7 @@ from selector import SurvivorSelector, ParentSelector
 from bayes_opt import BayesianOptimization, acquisition
 from sklearn.gaussian_process.kernels import Matern
 
+import concurrent.futures
 
 from revolve2.standards import terrains
 
@@ -63,7 +64,7 @@ def run_experiment(dbengine: Engine) -> None:
         session.commit()
     
     # Intialize the evaluator that will be used to evaluate robots.
-    environments = [terrains.flat(), terrains.rugged_heightmap((20.0, 20.0), (2, 2)),]
+    environments = [terrains.flat(), terrains.hills()]
     evaluators = [
         Evaluator(
             headless=True,
@@ -121,15 +122,18 @@ def run_experiment(dbengine: Engine) -> None:
         for _ in range(int(config.NUM_BODY_GENERATIONS/len(environments))):
             logging.info(f"Environment: {env_n+1}\tGeneration: {generation.generation_index + 1} / {config.NUM_BODY_GENERATIONS}.")
             # Train brain for every individual? Then decide fitness.
-            for individual in population.individuals:
-                train_brain(individual,rng_seed, evaluators[env_n])
+            # for individual in population.individuals:
+            #     train_brain(individual,rng_seed, evaluators[env_n])
+            learn_population(population.individuals)
 
             # Reproduction. Get offspring
             parents, _ = parent_selector.select(population)
             offspring = crossover_reproducer.reproduce(parents, parent_population=population)
             # Train offspring and evaluate
-            for c in offspring:
-                train_brain(c, rng_seed, evaluators[env_n])
+            # for c in offspring:
+            #     train_brain(c, rng_seed, evaluators[env_n])
+
+            learn_population(offspring)
 
             offspring_genotypes = []
             offspring_fitnesses = []
@@ -138,8 +142,6 @@ def run_experiment(dbengine: Engine) -> None:
                 offspring_fitnesses.append(c.fitness)
             # Select offspring
             population, _ = survivor_selector.select(population=population, offspring=offspring_genotypes, offspring_fitness=offspring_fitnesses)
-            
-            
             
             # Make it all into a generation and save it to the database.
             generation = Generation(
@@ -212,6 +214,19 @@ def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator):
     # Store best fitness in individual.fitness
     individual.fitness = individual.genotype.fitnesses[-1]
     return individual
+
+def learn_population(individuals: list[Individual], rng_seed: int, evaluator: Evaluator) -> list[Individual]:
+    with concurrent.futures.ProcessPoolExecutor(
+            max_workers=config.NUM_PARALLEL_PROCESSES
+    ) as executor:
+        futures = [
+            executor.submit(train_brain, individual, rng_seed, evaluator)
+            for individual in individuals
+        ]
+    ret = [future.result() for future in futures]
+    return ret
+
+
 
 def save_to_db(dbengine: Engine, generation: Generation) -> None:
     """

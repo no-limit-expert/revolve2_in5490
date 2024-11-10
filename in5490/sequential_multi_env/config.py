@@ -5,6 +5,7 @@ from revolve2.standards.modular_robots_v2 import gecko_v2, spider_v2
 DATABASE_FILE = "database.sqlite"
 NUM_REPETITIONS = 1
 NUM_SIMULATORS = 8
+NUM_PARALLEL_PROCESSES = 18
 INITIAL_STD = 0.5
 
 NUM_BRAIN_GENERATIONS = 5
