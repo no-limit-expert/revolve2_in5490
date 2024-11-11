@@ -21,4 +21,4 @@ NU = 2.5
 LENGTH_SCALE = 0.2
 NOISE_ALPHA = 0
 
-ENVS = [terrains.flat(), terrains.hills(length=7.5, height=0.1, num_edges= 75)]
+ENVS = [terrains.flat(), terrains.crater((10, 10), 0.3, 0, 0.1), terrains.steps(height=0.25)]
