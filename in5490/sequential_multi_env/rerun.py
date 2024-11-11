@@ -14,7 +14,7 @@ from revolve2.modular_robot.body.base import ActiveHinge
 from revolve2.modular_robot.brain.cpg import (
     active_hinges_to_cpg_network_structure_neighbor,
 )
-
+from revolve2.standards import fitness_functions, terrains
 
 def main() -> None:
     """Perform the rerun."""
@@ -53,7 +53,10 @@ def main() -> None:
     # Create the evaluator.
     evaluator = Evaluator(
         headless=False,
-        num_simulators=1
+        num_simulators=1,
+        # terrain=terrains.hills(length=7.5, height=0.1, num_edges= 75)
+        terrain=terrains.flat()
+        
     )
 
     # Show the robot.

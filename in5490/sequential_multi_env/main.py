@@ -64,7 +64,7 @@ def run_experiment(dbengine: Engine) -> None:
         session.commit()
     
     # Intialize the evaluator that will be used to evaluate robots.
-    environments = [terrains.flat(), terrains.hills()]
+    environments = config.ENVS
     evaluators = [
         Evaluator(
             headless=True,
@@ -104,7 +104,7 @@ def run_experiment(dbengine: Engine) -> None:
         ]
     )
 
-    learn_population(population.individuals, rng_seed, evaluators[0])
+    population.individuals = learn_population(population.individuals, rng_seed, evaluators[0])
 
     # Finish the zeroth generation and save it to the database.
     generation = Generation(
@@ -250,7 +250,7 @@ def main() -> None:
 
     # Open the database, only if it does not already exists.
     dbengine = open_database_sqlite(
-        config.DATABASE_FILE, open_method=OpenMethod.OVERWITE_IF_EXISTS
+        config.DATABASE_FILE, open_method=OpenMethod.NOT_EXISTS_AND_CREATE
     )
     # Create the structure of the database.
     Base.metadata.create_all(dbengine)
