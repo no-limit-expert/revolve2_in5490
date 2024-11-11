@@ -51,7 +51,7 @@ def simulate_scene(
     :returns: The results of simulation. The number of returned states depends on `sample_step`.
     :raises ValueError: If the viewer is not able to record.
     """
-    logging.info(f"Simulating scene {scene_id}")
+    # logging.info(f"Simulating scene {scene_id}")
 
     """Define mujoco data and model objects for simuating."""
     model, mapping = scene_to_model(
@@ -220,5 +220,5 @@ def simulate_scene(
             )
         )
 
-    logging.info(f"Scene {scene_id} done.")
+    # logging.info(f"Scene {scene_id} done.")
     return simulation_states
