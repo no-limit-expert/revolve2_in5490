@@ -104,8 +104,6 @@ def run_experiment(dbengine: Engine) -> None:
         ]
     )
 
-    population.individuals = learn_population(population.individuals, rng_seed, evaluators[0])
-
     # Finish the zeroth generation and save it to the database.
     generation = Generation(
         experiment=experiment, generation_index=0, population=population
@@ -120,13 +118,10 @@ def run_experiment(dbengine: Engine) -> None:
     # Loop for every environment
     for env_n in range(len(environments)):
         logging.info(f"Environment: {env_n + 1} / {len(environments)}.")
+        population.individuals = learn_population(population.individuals, rng_seed, evaluators[env_n])
         # Loop same amount of generations for every environment
         for _ in range(int(config.NUM_BODY_GENERATIONS/len(environments))):
             logging.info(f"Environment: {env_n+1}\tGeneration: {generation.generation_index + 1} / {config.NUM_BODY_GENERATIONS}.")
-            # Train brain for every individual? Then decide fitness.
-            # for individual in population.individuals:
-            #     train_brain(individual,rng_seed, evaluators[env_n])
-            population.individuals = learn_population(population.individuals, rng_seed, evaluators[env_n])
 
             # Reproduction. Get offspring
             parents, _ = parent_selector.select(population)
@@ -161,6 +156,8 @@ def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator):
     # Find all active hinges in the body
     body = individual.genotype.develop_body()
     active_hinges = body.find_modules_of_type(ActiveHinge)
+    individual.genotype.parameters = []
+    individual.genotype.fitnesses = []
 
     # If no hinges, skip
     if len(active_hinges) == 0:
