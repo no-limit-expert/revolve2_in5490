@@ -55,7 +55,9 @@ def main() -> None:
         headless=False,
         num_simulators=1,
         # terrain=terrains.hills(length=7.5, height=0.1, num_edges= 75)
-        terrain=terrains.flat()
+        # terrain=terrains.flat()
+        terrain=terrains.crater((10, 10), 0.3, 0, 0.1)
+        # terrain=terrains.steps(height=0.25)
         
     )
 
