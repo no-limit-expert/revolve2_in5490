@@ -115,11 +115,6 @@ def run_experiment(dbengine: Engine) -> None:
         for env_n in range(len(environments)):
             logging.info(f"Evaluating population on env: {env_n+1} / {len(environments)}")
             population.individuals = learn_population(population.individuals, rng_seed, evaluators[env_n], env_n)  
-
-        # FOR DEBUGGING ONLY
-        # for env_n in range(len(environments)):
-        #     for i in population.individuals:
-        #         train_brain(i, rng_seed, evaluators[env_n], env_n)
         
         # Reproduction. Get offspring
         parents, _ = parent_selector.select(population)
@@ -138,7 +133,6 @@ def run_experiment(dbengine: Engine) -> None:
             offspring_genotypes.append(c.genotype)
             offspring_fitnesses.append(c.fitnesses)
         # Select offspring
-        print(offspring_fitnesses)
         population, _ = survivor_selector.select(population=population, offspring=offspring_genotypes, offspring_fitness=offspring_fitnesses)
         
         # Make it all into a generation and save it to the database.

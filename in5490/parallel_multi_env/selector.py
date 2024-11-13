@@ -108,10 +108,7 @@ class NSGAIISurvivorSelector(Selector):
                 # Skip if either individual has no fitnesses
                 if not population[i].fitnesses or not population[j].fitnesses:
                     continue
-
-                print(population[i].fitnesses)
-                print(population[j].fitnesses)
-                    
+                
                 dom = self._calculate_dominance(
                     population[i].fitnesses,
                     population[j].fitnesses
