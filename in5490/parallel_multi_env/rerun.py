@@ -14,7 +14,7 @@ from revolve2.modular_robot.body.base import ActiveHinge
 from revolve2.modular_robot.brain.cpg import (
     active_hinges_to_cpg_network_structure_neighbor,
 )
-
+from revolve2.standards import fitness_functions, terrains
 
 def main() -> None:
     """Perform the rerun."""
@@ -37,7 +37,7 @@ def main() -> None:
         genotype: Genotype = row[0]
         fitness = row[1]
 
-    parameters = genotype.parameters[-1]
+    parameters = genotype.parameters_env[0][-1]
 
     logging.info(f"Best fitness: {fitness}")
     logging.info(f"Best parameters: {parameters}")
@@ -53,7 +53,12 @@ def main() -> None:
     # Create the evaluator.
     evaluator = Evaluator(
         headless=False,
-        num_simulators=1
+        num_simulators=1,
+        # terrain=terrains.hills(length=7.5, height=0.1, num_edges= 75)
+        # terrain=terrains.flat()
+        terrain=terrains.crater((10, 10), 0.3, 0, 0.1)
+        # terrain=terrains.steps(height=0.25)
+        
     )
 
     # Show the robot.

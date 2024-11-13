@@ -15,7 +15,6 @@ from database_components import (
 from revolve2.experimentation.evolution.abstract_elements import Reproducer
 
 
-
 class CrossoverReproducer(Reproducer):
     """A simple crossover reproducer using multineat."""
 

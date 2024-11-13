@@ -102,12 +102,10 @@ class Evaluator:
         )
 
         # Calculate the xy displacements.
-        xy_displacements = [
-            fitness_functions.xy_displacement(
-                states[0].get_modular_robot_simulation_state(robot),
-                states[-1].get_modular_robot_simulation_state(robot),
-            )
-            for robot, states in zip(robots, scene_states)
-        ]
+        if len(fitness_functions.detect_outliers(scene_states[0], robot)) > 1:
+            return [0.0]
 
-        return np.array(xy_displacements)
+        return [fitness_functions.forward_displacement(
+                scene_states[0][0].get_modular_robot_simulation_state(robot),
+                scene_states[0][-1].get_modular_robot_simulation_state(robot),
+            )]

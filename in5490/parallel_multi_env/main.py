@@ -2,7 +2,6 @@
 
 import logging
 import numpy as np
-import cma
 import multineat
 import config
 from database_components import (
@@ -25,15 +24,15 @@ from revolve2.modular_robot.brain.cpg import (
     active_hinges_to_cpg_network_structure_neighbor,
 )
 
-from revolve2.experimentation.evolution import ModularRobotEvolution
 from crossover import CrossoverReproducer
-from selector import SurvivorSelector, ParentSelector
+from selector import NSGAIISurvivorSelector, ParentSelector
 # Ege sourced bayes_opt
 from bayes_opt import BayesianOptimization, acquisition
 from sklearn.gaussian_process.kernels import Matern
 
+import statistics
 
-from revolve2.standards import terrains
+import concurrent.futures
 
 import pprint
 
@@ -63,7 +62,7 @@ def run_experiment(dbengine: Engine) -> None:
         session.commit()
     
     # Intialize the evaluator that will be used to evaluate robots.
-    environments = [terrains.flat(), terrains.rugged_heightmap((20.0, 20.0), (2, 2)),]
+    environments = config.ENVS
     evaluators = [
         Evaluator(
             headless=True,
@@ -72,9 +71,8 @@ def run_experiment(dbengine: Engine) -> None:
         ) for env in environments
     ]
 
-
     parent_selector = ParentSelector(offspring_size=config.OFFSPRING_SIZE, rng=rng)
-    survivor_selector = SurvivorSelector(rng=rng)
+    survivor_selector = NSGAIISurvivorSelector(rng=rng)
     crossover_reproducer = CrossoverReproducer(
         rng=rng, innov_db_body=innov_db_body, innov_db_brain=innov_db_brain
     )
@@ -92,13 +90,11 @@ def run_experiment(dbengine: Engine) -> None:
 
     # Evaluate the initial population.
     logging.info("Evaluating initial population.")
-    initial_bodies = [g.develop_body() for g in initial_genotypes]
-    # initial_fitnesses = evaluators[0].evaluate(initial_genotypes, initial_bodies)
 
     # Create a population of individuals, combining genotype with fitness.
     population = Population(
         individuals=[
-            train_brain(Individual(genotype=genotype, fitness=0.0), rng_seed, evaluators[0]) 
+            Individual(genotype=genotype, fitness=0.0)
             for genotype in initial_genotypes
         ]
     )
@@ -112,51 +108,66 @@ def run_experiment(dbengine: Engine) -> None:
     # Run cma for the defined number of generations.
     logging.info("Start optimization process.")
 
-
-
     # Loop for every environment
-    for env_n in range(len(environments)):
-        logging.info(f"Environment: {env_n + 1} / {len(environments)}.")
-        # Loop same amount of generations for every environment
-        for _ in range(int(config.NUM_BODY_GENERATIONS/len(environments))):
-            logging.info(f"Environment: {env_n+1}\tGeneration: {generation.generation_index + 1} / {config.NUM_BODY_GENERATIONS}.")
-            # Train brain for every individual? Then decide fitness.
-            for individual in population.individuals:
-                train_brain(individual,rng_seed, evaluators[env_n])
+    for i in range(config.NUM_BODY_GENERATIONS):
+        logging.info(f"Generation: {i+1} / {config.NUM_BODY_GENERATIONS}.")
+        # Train population and evaluate
+        for env_n in range(len(environments)):
+            logging.info(f"Evaluating population on env: {env_n+1} / {len(environments)}")
+            population.individuals = learn_population(population.individuals, rng_seed, evaluators[env_n], env_n)  
 
-            # Reproduction. Get offspring
-            parents, _ = parent_selector.select(population)
-            offspring = crossover_reproducer.reproduce(parents, parent_population=population)
-            # Train offspring and evaluate
-            for c in offspring:
-                train_brain(c, rng_seed, evaluators[env_n])
+        # FOR DEBUGGING ONLY
+        # for env_n in range(len(environments)):
+        #     for i in population.individuals:
+        #         train_brain(i, rng_seed, evaluators[env_n], env_n)
+        
+        # Reproduction. Get offspring
+        parents, _ = parent_selector.select(population)
+        offspring = crossover_reproducer.reproduce(parents, parent_population=population)
 
-            offspring_genotypes = []
-            offspring_fitnesses = []
-            for c in offspring:
-                offspring_genotypes.append(c.genotype)
-                offspring_fitnesses.append(c.fitness)
-            # Select offspring
-            population, _ = survivor_selector.select(population=population, offspring=offspring_genotypes, offspring_fitness=offspring_fitnesses)
-            
-            
-            
-            # Make it all into a generation and save it to the database.
-            generation = Generation(
-                experiment=experiment,
-                generation_index=generation.generation_index+1,
-                population=population,
-            )
+        # Train offspring and evaluate
+        for env_n in range(len(environments)):
+            logging.info(f"Evaluating offspring on env: {env_n+1} / {len(environments)}")
+            offspring = learn_population(offspring, rng_seed, evaluators[env_n], env_n)
+        
+        
+        offspring_genotypes = []
+        offspring_fitnesses = []
+        
+        for c in offspring:
+            offspring_genotypes.append(c.genotype)
+            offspring_fitnesses.append(c.fitnesses)
+        # Select offspring
+        print(offspring_fitnesses)
+        population, _ = survivor_selector.select(population=population, offspring=offspring_genotypes, offspring_fitness=offspring_fitnesses)
+        
+        # Make it all into a generation and save it to the database.
+        generation = Generation(
+            experiment=experiment,
+            generation_index=generation.generation_index+1,
+            population=population,
+        )
 
-            # Finally save logs
-            save_to_db(dbengine=dbengine, generation=generation)
-        logging.info(f"Finished training on environment {env_n + 1}.")
+        # Finally save logs
+        save_to_db(dbengine=dbengine, generation=generation)
 
 
-def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator):
+def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator, env_n: int):
     # Find all active hinges in the body
     body = individual.genotype.develop_body()
     active_hinges = body.find_modules_of_type(ActiveHinge)
+    # Make sure to initialize lists of params and fitnesses
+    if individual.genotype.parameters_env is None:
+        individual.genotype.parameters_env = [[] for _ in range(len(config.ENVS))]
+    if individual.genotype.fitnesses_env is None:
+        individual.genotype.fitnesses_env = [[] for _ in range(len(config.ENVS))]
+    if individual.fitnesses == None:
+        individual.fitnesses = [0.0]*3
+    
+
+    individual.genotype.parameters_env[env_n] = []
+    individual.genotype.fitnesses_env[env_n] = []
+        
 
     # If no hinges, skip
     if len(active_hinges) == 0:
@@ -200,18 +211,36 @@ def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator):
         # TODO: These values are the brain parameters and fitness to save
         brain_parameters = list(next_point.values())
         fitness = fitnesses[0]
-        
-        if individual.genotype.parameters is None:
-            individual.genotype.parameters = []
-        if individual.genotype.fitnesses is None:
-            individual.genotype.fitnesses = []
-    
-        individual.genotype.parameters.append(brain_parameters)
-        individual.genotype.fitnesses.append(fitness)
+
+        individual.genotype.parameters_env[env_n].append(brain_parameters)
+        individual.genotype.fitnesses_env[env_n].append(fitness)
 
     # Store best fitness in individual.fitness
-    individual.fitness = individual.genotype.fitnesses[-1]
+    individual.fitnesses[env_n] = individual.genotype.fitnesses_env[env_n][-1]
+
+    individual.fitness = penalized_geometric_mean(individual.fitnesses) # Column not used for anything 
+    # print(individual.fitnesses)
+    # print(individual.genotype.fitnesses_env)
     return individual
+
+def learn_population(individuals: list[Individual], rng_seed: int, evaluator: Evaluator, env_n: int) -> list[Individual]:
+    with concurrent.futures.ProcessPoolExecutor(
+            max_workers=config.NUM_PARALLEL_PROCESSES
+    ) as executor:
+        futures = [
+            executor.submit(train_brain, individual, rng_seed, evaluator, env_n)
+            for individual in individuals
+        ]
+    return [future.result() for future in futures]
+
+def penalized_geometric_mean(fitnesses: list[float], alpha: float = 0.5) -> float:
+    # Calculate the geometric mean
+    geometric_mean = (fitnesses[0] * fitnesses[1] * fitnesses[2]) ** (1 / 3)
+    # Calculate the standard deviation
+    std_dev = statistics.stdev(fitnesses)
+    # Apply penalty
+    penalized_score = geometric_mean - alpha * std_dev
+    return penalized_score
 
 def save_to_db(dbengine: Engine, generation: Generation) -> None:
     """

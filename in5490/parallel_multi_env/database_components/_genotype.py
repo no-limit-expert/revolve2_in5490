@@ -22,12 +22,12 @@ class Genotype(Base, HasId, BodyGenotypeOrmV2, BrainGenotypeCpgOrm):
 
     __tablename__ = "genotype"
 
-    parameters: orm.Mapped[list[list[float]]] = orm.mapped_column(
+    parameters_env: orm.Mapped[list[list[list[float]]]] = orm.mapped_column(
         PickleType, 
         nullable=True, 
         default=None
     )
-    fitnesses: orm.Mapped[list[float]] = orm.mapped_column(
+    fitnesses_env: orm.Mapped[list[list[float]]] = orm.mapped_column(
         PickleType, 
         nullable=True, 
         default=None
