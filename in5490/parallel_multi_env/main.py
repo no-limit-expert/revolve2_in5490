@@ -98,6 +98,11 @@ def run_experiment(dbengine: Engine) -> None:
             for genotype in initial_genotypes
         ]
     )
+     
+    for env_n in range(len(environments)):
+            logging.info(f"Evaluating population on env: {env_n+1} / {len(environments)}")
+            population.individuals = learn_population(population.individuals, rng_seed, evaluators[env_n], env_n)  
+        
 
     # Finish the zeroth generation and save it to the database.
     generation = Generation(
@@ -111,11 +116,7 @@ def run_experiment(dbengine: Engine) -> None:
     # Loop for every environment
     for i in range(config.NUM_BODY_GENERATIONS):
         logging.info(f"Generation: {i+1} / {config.NUM_BODY_GENERATIONS}.")
-        # Train population and evaluate
-        for env_n in range(len(environments)):
-            logging.info(f"Evaluating population on env: {env_n+1} / {len(environments)}")
-            population.individuals = learn_population(population.individuals, rng_seed, evaluators[env_n], env_n)  
-        
+
         # Reproduction. Get offspring
         parents, _ = parent_selector.select(population)
         offspring = crossover_reproducer.reproduce(parents, parent_population=population)
@@ -158,14 +159,13 @@ def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator, env
     if individual.fitnesses == None:
         individual.fitnesses = [0.0]*3
     
-
     individual.genotype.parameters_env[env_n] = []
     individual.genotype.fitnesses_env[env_n] = []
         
-
     # If no hinges, skip
     if len(active_hinges) == 0:
-        individual.fitness = 0
+        individual.fitness = 0.0
+        individual.genotype.fitnesses_env[env_n].append(0.0)
         return individual
 
     # Create a structure for the CPG network from these hinges.
@@ -179,6 +179,7 @@ def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator, env
     pbounds = {}
     for i in range(cpg_network_structure.num_connections):
         pbounds[str(i)] = (-1, 1)
+    
     # Initialize BO
     optimizer = BayesianOptimization(
         f=None,
@@ -213,8 +214,7 @@ def train_brain(individual: Individual, rng_seed: int, evaluator: Evaluator, env
     individual.fitnesses[env_n] = individual.genotype.fitnesses_env[env_n][-1]
 
     individual.fitness = penalized_geometric_mean(individual.fitnesses) # Column not used for anything 
-    # print(individual.fitnesses)
-    # print(individual.genotype.fitnesses_env)
+
     return individual
 
 def learn_population(individuals: list[Individual], rng_seed: int, evaluator: Evaluator, env_n: int) -> list[Individual]:
@@ -228,13 +228,50 @@ def learn_population(individuals: list[Individual], rng_seed: int, evaluator: Ev
     return [future.result() for future in futures]
 
 def penalized_geometric_mean(fitnesses: list[float], alpha: float = 0.5) -> float:
-    # Calculate the geometric mean
-    geometric_mean = (fitnesses[0] * fitnesses[1] * fitnesses[2]) ** (1 / 3)
-    # Calculate the standard deviation
-    std_dev = statistics.stdev(fitnesses)
-    # Apply penalty
-    penalized_score = geometric_mean - alpha * std_dev
-    return penalized_score
+    """
+    Calculate the penalized geometric mean of fitness values, properly handling negatives.
+    Negative fitness values yield worse scores than positive ones.
+    
+    Args:
+        fitnesses: List of fitness values
+        alpha: Penalty factor between 0 and 1 (default 0.5)
+            - alpha = 0: No variance penalty
+            - alpha = 1: Maximum variance penalty
+    
+    Returns:
+        float: Penalized geometric mean value
+    """
+    import numpy as np
+    
+    if len(fitnesses) == 0:
+        raise ValueError("Fitness list cannot be empty")
+    if not 0 <= alpha <= 1:
+        raise ValueError("Alpha must be between 0 and 1")
+    
+    values = np.array(fitnesses)
+    
+    # Find the shift needed to make all values positive for geometric mean
+    min_value = min(min(values), 0)  # Get the minimum or 0, whichever is smaller
+    shift = abs(min_value) + 1  # Add 1 to avoid log(0)
+    
+    # Calculate geometric mean by:
+    # 1. Shift values to positive
+    # 2. Take geometric mean
+    # 3. Shift back to original scale
+    shifted_values = values + shift
+    geometric_mean = np.exp(np.mean(np.log(shifted_values))) - shift
+    
+    # Calculate coefficient of variation using original values
+    mean = np.mean(values)
+    if mean == 0:
+        coefficient_of_variation = 0
+    else:
+        coefficient_of_variation = np.std(values) / abs(mean)
+    
+    # Apply variance penalty
+    penalized_mean = geometric_mean * (1 - alpha * coefficient_of_variation)
+    
+    return float(penalized_mean)
 
 def save_to_db(dbengine: Engine, generation: Generation) -> None:
     """

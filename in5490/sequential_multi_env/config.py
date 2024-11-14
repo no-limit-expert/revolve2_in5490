@@ -1,6 +1,5 @@
 """Configuration parameters for this example."""
 
-from revolve2.standards.modular_robots_v2 import gecko_v2, spider_v2
 from revolve2.standards import terrains
 
 DATABASE_FILE = "database.sqlite"
@@ -10,7 +9,6 @@ NUM_PARALLEL_PROCESSES = 50
 INITIAL_STD = 0.5
 
 NUM_BRAIN_GENERATIONS = 30
-# BODY = spider_v2()
 
 POPULATION_SIZE = 150
 OFFSPRING_SIZE = 50
